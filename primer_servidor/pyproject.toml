@@ -1,0 +1,8 @@
+[project]
+name = "mcp-server-videogames-store"
+version = "0.1.0"
+dependencies = [
+"fastmcp",
+]
+[project.scripts]
+mcp-server = "mcp_server:main"
