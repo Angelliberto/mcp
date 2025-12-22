@@ -5,15 +5,7 @@ from pymongo import MongoClient
 from bson import ObjectId
 from typing import Any, Union
 
-mcp = FastMCP("Mflix Master")
-
-def limpiar_entrada(datos: Any) -> Any:
-    """Extrae el contenido real del texto del usuario evitando metadatos de Telegram."""
-    if isinstance(datos, dict):
-        if "text" in datos: return datos["text"]
-        if "message" in datos and isinstance(datos["message"], dict):
-            return datos["message"].get("text", datos)
-    return datos
+mcp = FastMCP("Mflix Ultra Logic")
 
 def get_db():
     client = MongoClient(os.getenv("MONGO_URI"), serverSelectionTimeoutMS=5000)
@@ -25,44 +17,49 @@ def serialize(obj):
     if isinstance(obj, list): return [serialize(i) for i in obj]
     return obj
 
-@mcp.tool()
-def buscar_peliculas(filtro_json: Union[str, dict]) -> str:
-    """Busca en 'movies'. Ej filtro: {"imdb.rating": {"$gt": 8}}"""
-    try:
-        entrada = limpiar_entrada(filtro_json)
-        query = json.loads(entrada) if isinstance(entrada, str) else entrada
-        # Limpieza de campos de n8n si se colaron
-        for k in ["update_id", "message", "toolCallId"]: query.pop(k, None)
-        
-        db = get_db()
-        # Excluimos plot_embedding por ser un array de 1536 elementos (muy pesado para n8n)
-        res = list(db.movies.find(query, {"plot_embedding": 0, "poster": 0}).limit(3))
-        return json.dumps(serialize(res), ensure_ascii=False)
-    except Exception as e:
-        return f"Error: {str(e)}"
+# --- TOOLS ESPECÍFICAS PARA CADA PREGUNTA ---
 
 @mcp.tool()
-def obtener_comentarios(movie_id: str) -> str:
-    """Busca comentarios por movie_id (ObjectId)."""
-    try:
-        mid = limpiar_entrada(movie_id)
-        db = get_db()
-        res = list(db.comments.find({"movie_id": ObjectId(mid)}).limit(5))
-        return json.dumps(serialize(res), ensure_ascii=False)
-    except Exception as e:
-        return f"Error: {str(e)}"
+def buscar_por_titulo(titulo: str) -> str:
+    """Usa esta tool cuando el usuario dé el nombre de una película."""
+    db = get_db()
+    res = list(db.movies.find({"title": {"$regex": titulo, "$options": "i"}}, {"plot_embedding": 0, "poster": 0}).limit(3))
+    return json.dumps(serialize(res), ensure_ascii=False)
 
 @mcp.tool()
-def buscar_teatros(ciudad: str) -> str:
-    """Busca en 'theaters' por ciudad. Ej: 'Altoona'"""
-    try:
-        city = limpiar_entrada(ciudad)
-        db = get_db()
-        # Query exacta según tu esquema: location.address.city
-        res = list(db.theaters.find({"location.address.city": city}).limit(3))
-        return json.dumps(serialize(res), ensure_ascii=False)
-    except Exception as e:
-        return f"Error: {str(e)}"
+def buscar_por_genero(genero_ingles: str) -> str:
+    """Usa esta tool cuando el usuario pida un género (Action, Horror, Comedy, etc)."""
+    db = get_db()
+    res = list(db.movies.find({"genres": genero_ingles}, {"plot_embedding": 0, "poster": 0}).limit(5))
+    return json.dumps(serialize(res), ensure_ascii=False)
+
+@mcp.tool()
+def buscar_por_año(año: int) -> str:
+    """Usa esta tool cuando el usuario mencione un año específico."""
+    db = get_db()
+    res = list(db.movies.find({"year": año}, {"plot_embedding": 0, "poster": 0}).limit(5))
+    return json.dumps(serialize(res), ensure_ascii=False)
+
+@mcp.tool()
+def buscar_mejores_peliculas() -> str:
+    """Usa esta tool cuando pregunten '¿qué hay?' o 'dame una lista' o 'las mejores'."""
+    db = get_db()
+    res = list(db.movies.find({"imdb.rating": {"$gte": 9}}, {"plot_embedding": 0, "poster": 0}).limit(5))
+    return json.dumps(serialize(res), ensure_ascii=False)
+
+@mcp.tool()
+def ver_criticas_por_id(movie_id: str) -> str:
+    """Usa esta tool para obtener comentarios de una película usando su ID."""
+    db = get_db()
+    res = list(db.comments.find({"movie_id": ObjectId(movie_id)}).limit(5))
+    return json.dumps(serialize(res), ensure_ascii=False)
+
+@mcp.tool()
+def localizar_cines(ciudad: str) -> str:
+    """Usa esta tool para buscar teatros en una ciudad específica."""
+    db = get_db()
+    res = list(db.theaters.find({"location.address.city": ciudad}).limit(3))
+    return json.dumps(serialize(res), ensure_ascii=False)
 
 if __name__ == "__main__":
     mcp.run(transport="sse", host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
