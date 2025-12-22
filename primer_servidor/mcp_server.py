@@ -8,7 +8,7 @@ import json
 mcp = FastMCP("Videogames Store MongoDB")
 
 # Configuración de conexión (Usa variables de entorno en Koyeb)
-MONGO_URI = os.getenv("MONGO_URI","mongodb+srv://angellibertoceb:rawUoXCLskO3kqgQ@cluster0.aqndn.mongodb.net/?appName=Cluster0 ")
+MONGO_URI = os.getenv("MONGO_URI","mongodb+srv://angellibertoceb:rawUoXCLskO3kqgQ@cluster0.aqndn.mongodb.net/?appName=Cluster0")
 DB_NAME = os.getenv("DB_NAME", "sample_mflix")
 
 def obtener_db():
