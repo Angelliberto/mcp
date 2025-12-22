@@ -5,18 +5,25 @@ from pymongo import MongoClient
 from bson import ObjectId
 from typing import List, Dict, Any
 
-# MCP Server instance
+# 1. DEFINICIÓN DEL SERVIDOR
 mcp = FastMCP("Mflix Movie Database")
 
-MONGO_URI = os.getenv("MONGO_URI","mongodb+srv://angellibertoceb:rawUoXCLskO3kqgQ@cluster0.aqndn.mongodb.net/?appName=Cluster0")
+# 2. CONEXIÓN GLOBAL (OPTIMIZACIÓN DE VELOCIDAD)
+# Al hacerlo aquí afuera, se conecta solo 1 vez cuando arranca el servidor, no en cada petición.
+MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "sample_mflix")
 
-def obtener_db():
+try:
     client = MongoClient(MONGO_URI)
-    return client[DB_NAME]
+    db = client[DB_NAME]
+    # Un pequeño ping para asegurar que la conexión está viva al inicio
+    client.admin.command('ping')
+    print("✅ Conectado exitosamente a MongoDB Atlas")
+except Exception as e:
+    print(f"❌ Error conectando a Mongo: {e}")
 
+# Helpers
 def serialize_mongo(obj):
-    """Convierte objetos de Mongo (como ObjectId) a formatos legibles por JSON"""
     if isinstance(obj, ObjectId):
         return str(obj)
     if isinstance(obj, dict):
@@ -25,57 +32,55 @@ def serialize_mongo(obj):
         return [serialize_mongo(i) for i in obj]
     return obj
 
+# --- TOOLS MEJORADAS ---
+
 @mcp.tool()
-def buscar_peliculas(filtro_json: str, limite: int = 5) -> List[Dict[str, Any]]:
+def busqueda_simple(texto: str) -> List[Dict[str, Any]]:
     """
-    Busca películas en la colección 'movies'.
-    Ejemplo de filtros: {"genres": "Drama"}, {"year": {"$gte": 2010}}, {"cast": "Paul Muni"}
+    Busca películas por título o trama usando una búsqueda de texto simple.
+    Úsala cuando el usuario pregunte por temas generales como 'películas de barcos', 'Harry Potter', etc.
     """
-    db = obtener_db()
     try:
-        query = json.loads(filtro_json)
-        # Excluimos plot_embedding por ser un array gigante innecesario para el agente
-        resultados = list(db.movies.find(query, {"plot_embedding": 0}).limit(limite))
+        # Busca en el índice de texto (si existe) o usa regex como fallback flexible
+        # Opción Regex (más lenta pero funciona sin índices especiales):
+        regex_query = {"$or": [
+            {"title": {"$regex": texto, "$options": "i"}},
+            {"fullplot": {"$regex": texto, "$options": "i"}}
+        ]}
+        
+        resultados = list(db.movies.find(regex_query, 
+                                       {"plot_embedding": 0, "poster": 0}) # Excluimos campos pesados
+                                       .limit(5))
+        
+        if not resultados:
+            return [{"mensaje": f"No encontré películas que coincidan con '{texto}'."}]
+            
         return serialize_mongo(resultados)
     except Exception as e:
         return [{"error": str(e)}]
 
 @mcp.tool()
-def obtener_comentarios_pelicula(movie_id: str) -> List[Dict[str, Any]]:
+def consulta_avanzada_json(filtro_json: str) -> List[Dict[str, Any]]:
     """
-    Obtiene los comentarios de una película específica usando su ID.
+    SOLO usar si necesitas filtros específicos (año, rating, director).
+    Espera un string JSON válido de MongoDB. Ej: {"year": 2015, "imdb.rating": {"$gt": 8}}
     """
-    db = obtener_db()
     try:
-        comentarios = list(db.comments.find({"movie_id": ObjectId(movie_id)}))
-        return serialize_mongo(comentarios)
+        query = json.loads(filtro_json)
+        resultados = list(db.movies.find(query, {"plot_embedding": 0, "poster": 0}).limit(5))
+        return serialize_mongo(resultados)
     except Exception as e:
-        return [{"error": "ID no válido o error de consulta"}]
+        return [{"error": f"JSON inválido o error de consulta: {str(e)}"}]
 
 @mcp.tool()
-def buscar_teatros_por_ciudad(ciudad: str) -> List[Dict[str, Any]]:
-    """
-    Busca teatros (cines) en una ciudad específica.
-    """
-    db = obtener_db()
+def estadisticas_rapidas() -> str:
+    """Devuelve un resumen rápido de qué hay en la base de datos."""
     try:
-        teatros = list(db.theaters.find({"location.address.city": ciudad}))
-        return serialize_mongo(teatros)
+        count = db.movies.estimated_document_count()
+        return f"Hay un total de {count} películas en la base de datos."
     except Exception as e:
-        return [{"error": str(e)}]
-
-@mcp.tool()
-def estadisticas_mflix() -> Dict[str, Any]:
-    """
-    Devuelve un conteo general de las colecciones para que el agente conozca el volumen de datos.
-    """
-    db = obtener_db()
-    return {
-        "total_peliculas": db.movies.count_documents({}),
-        "total_usuarios": db.users.count_documents({}),
-        "total_comentarios": db.comments.count_documents({}),
-        "total_teatros": db.theaters.count_documents({})
-    }
+        return f"Error obteniendo stats: {str(e)}"
 
 if __name__ == "__main__":
+
     mcp.run(transport="sse", host="0.0.0.0", port=8080)
