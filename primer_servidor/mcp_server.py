@@ -1,10 +1,16 @@
 import os
+import sys
 import json
 from fastmcp import FastMCP
 from pymongo import MongoClient
 from bson import ObjectId
 from typing import Any, Union, Optional, List
 from datetime import datetime
+
+# Fix encoding for Windows console
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 
 mcp = FastMCP("Dream Lodge MCP Server")
 
@@ -380,7 +386,13 @@ if __name__ == "__main__":
     # Puerto dinámico o 8080 por defecto
     # Koyeb asignará el puerto automáticamente a través de la variable PORT
     port = int(os.getenv("PORT", 8080))
-    print(f"🚀 Iniciando Dream Lodge MCP Server en puerto {port}")
-    print(f"📡 Servidor disponible en http://0.0.0.0:{port}")
-    print(f"🔗 MongoDB: {os.getenv('DB_NAME', 'dreamlodge')}")
+    try:
+        print(f"🚀 Iniciando Dream Lodge MCP Server en puerto {port}")
+        print(f"📡 Servidor disponible en http://0.0.0.0:{port}")
+        print(f"🔗 MongoDB: {os.getenv('DB_NAME', 'dreamlodge')}")
+    except UnicodeEncodeError:
+        # Fallback for consoles that don't support emojis
+        print(f"[*] Iniciando Dream Lodge MCP Server en puerto {port}")
+        print(f"[*] Servidor disponible en http://0.0.0.0:{port}")
+        print(f"[*] MongoDB: {os.getenv('DB_NAME', 'dreamlodge')}")
     mcp.run(transport="sse", host="0.0.0.0", port=port)
