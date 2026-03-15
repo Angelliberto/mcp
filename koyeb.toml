@@ -1,0 +1,17 @@
+# Configuración de Koyeb para Dream Lodge MCP Server
+# Este archivo es opcional pero ayuda a configurar el despliegue
+
+[build]
+# Koyeb detectará automáticamente el Dockerfile
+# No necesitas especificar nada aquí a menos que uses buildpacks
+
+[deploy]
+# Configuración de despliegue
+healthcheck_path = "/health"
+healthcheck_interval = 30
+
+# Variables de entorno (se configuran en el dashboard de Koyeb)
+# No las pongas aquí por seguridad, úsalas en el dashboard:
+# - MONGO_URI
+# - DB_NAME
+# - PORT (Koyeb lo asigna automáticamente)
