@@ -2,13 +2,17 @@
 # Este archivo es opcional pero ayuda a configurar el despliegue
 
 [build]
-# Koyeb detectará automáticamente el Dockerfile
-# No necesitas especificar nada aquí a menos que uses buildpacks
+# Forzar el uso de Docker en lugar de buildpacks
+type = "docker"
 
 [deploy]
 # Configuración de despliegue
-healthcheck_path = "/health"
-healthcheck_interval = 30
+# healthcheck_path = "/health"  # Comentado - Koyeb detectará automáticamente si el servidor responde
+# healthcheck_interval = 30
+
+# Comando de ejecución (si se usan buildpacks en lugar de Docker)
+# Si usas Docker, el CMD del Dockerfile se usará automáticamente
+run = "python primer_servidor/mcp_server.py"
 
 # Variables de entorno (se configuran en el dashboard de Koyeb)
 # No las pongas aquí por seguridad, úsalas en el dashboard:
