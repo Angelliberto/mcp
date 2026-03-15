@@ -7,8 +7,10 @@ type = "docker"
 
 [deploy]
 # Configuración de despliegue
+# Deshabilitar health check TCP (Koyeb usará el puerto de la variable PORT automáticamente)
 # healthcheck_path = "/health"  # Comentado - Koyeb detectará automáticamente si el servidor responde
 # healthcheck_interval = 30
+# healthcheck_port = 8080  # Koyeb debería usar el puerto de PORT automáticamente
 
 # Comando de ejecución (si se usan buildpacks en lugar de Docker)
 # Si usas Docker, el CMD del Dockerfile se usará automáticamente
