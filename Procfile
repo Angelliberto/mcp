@@ -1,1 +1,1 @@
-web: python primer_servidor/mcp_server.py
+web: python server/mcp_server.py

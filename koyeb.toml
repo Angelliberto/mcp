@@ -14,7 +14,7 @@ type = "docker"
 
 # Comando de ejecución (si se usan buildpacks en lugar de Docker)
 # Si usas Docker, el CMD del Dockerfile se usará automáticamente
-run = "python primer_servidor/mcp_server.py"
+run = "python server/mcp_server.py"
 
 # Variables de entorno (se configuran en el dashboard de Koyeb)
 # No las pongas aquí por seguridad, úsalas en el dashboard:

@@ -11,4 +11,7 @@ services:
       - MONGO_URI=${MONGO_URI:-mongodb://localhost:27017}
       - DB_NAME=${DB_NAME:-dreamlodge}
       - PORT=${PORT:-8080}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-}
+      - MCP_INTERNAL_SECRET=${MCP_INTERNAL_SECRET:-}
     restart: always
