@@ -17,6 +17,23 @@ from system_prompts import build_system_prompt
 logger = logging.getLogger("dreamlodge.ai")
 
 
+def _format_exception_for_client(exc: BaseException, max_len: int = 800) -> str:
+    """Texto seguro para mostrar al cliente (sin sustituir logs completos)."""
+    parts: list[str] = []
+    cur: Optional[BaseException] = exc
+    depth = 0
+    while cur is not None and depth < 4:
+        s = str(cur).strip()
+        if s and s not in parts:
+            parts.append(s)
+        cur = cur.__cause__ or cur.__context__
+        depth += 1
+    msg = " | ".join(parts) if parts else type(exc).__name__
+    if len(msg) > max_len:
+        return msg[: max_len - 1] + "…"
+    return msg
+
+
 def _trait_total(scores: dict, key: str) -> float:
     """Extrae el total 0–5 de un rasgo OCEAN aunque venga como dict o número."""
     v = scores.get(key)
@@ -170,7 +187,10 @@ class DreamLodgeAIAgent:
                 raise
 
         if last_err:
-            raise last_err
+            detail = _format_exception_for_client(last_err)
+            raise RuntimeError(
+                f"Gemini falló tras probar: {', '.join(tried)}. {detail}"
+            ) from last_err
         raise RuntimeError(
             f"No hay modelos Gemini compatibles. Modelos probados: {', '.join(tried)}"
         )
@@ -690,9 +710,10 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
                 prompt, purpose="descripción artística", timeout_ms=30000
             )
         except Exception as ex:
-            logger.exception("artistic_description: fallo al llamar a Gemini: %s", ex)
+            logger.exception("artistic_description: fallo al llamar a Gemini")
+            detail = _format_exception_for_client(ex)
             raise RuntimeError(
-                "No se pudo generar la descripción con el modelo de IA. Revisa cuota, clave y modelos disponibles."
+                f"No se pudo generar la descripción con el modelo de IA. {detail}"
             ) from ex
 
         m = re.search(r"\{[\s\S]*\}", text or "")
@@ -709,7 +730,9 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
             parsed = json.loads(m.group(0))
         except json.JSONDecodeError as ex:
             logger.warning("artistic_description: JSON inválido: %s", ex)
-            raise RuntimeError("El modelo devolvió JSON inválido.") from ex
+            raise RuntimeError(
+                f"El modelo devolvió JSON inválido: {ex}"
+            ) from ex
 
         if not isinstance(parsed, dict):
             raise RuntimeError("La respuesta del modelo no es un objeto JSON.")

@@ -289,7 +289,16 @@ async def http_artistic_description(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     except RuntimeError as e:
         log.warning("artistic-description: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=503)
+        cause = e.__cause__
+        err_type = type(cause).__name__ if cause else type(e).__name__
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": str(e),
+                "error_type": err_type,
+            },
+            status_code=503,
+        )
     except Exception as e:
         log.error(
             "artistic-description: error interno\n%s",
