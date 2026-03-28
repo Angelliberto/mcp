@@ -617,116 +617,6 @@ class DreamLodgeAIAgent:
         except Exception:
             return (current_title or um[:40])
 
-    def generate_artistic_description_from_scores(
-        self, scores: dict, test_type: Optional[str]
-    ) -> dict[str, Any]:
-        o = _trait_total(scores, "openness")
-        e = _trait_total(scores, "extraversion")
-        n = _trait_total(scores, "neuroticism")
-        c = _trait_total(scores, "conscientiousness")
-        a = _trait_total(scores, "agreeableness")
-
-        if o > 4 and n > 3.5:
-            return {
-                "profile": "Existencial",
-                "description": (
-                    "Tu perfil artístico revela una búsqueda profunda del significado y la autenticidad. "
-                    "Con una alta apertura a experiencias combinada con sensibilidad emocional, te atraen las obras "
-                    "que exploran las grandes preguntas sobre la existencia, la identidad y el sentido de la vida. "
-                    "Prefieres experiencias que desafían tu perspectiva y te invitan a reflexionar sobre la condición humana. "
-                    "El arte que más te conmueve es aquel que no teme abordar temas complejos y que te permite conectar con emociones profundas."
-                ),
-                "recommendations": [
-                    "cine de autor",
-                    "música experimental",
-                    "literatura existencialista",
-                    "arte conceptual",
-                    "juegos filosóficos",
-                ],
-            }
-        if o > 3.5 and e < 2:
-            return {
-                "profile": "Contemplativo",
-                "description": (
-                    "Tu personalidad artística se caracteriza por una preferencia por la introspección y la reflexión pausada. "
-                    "Con alta apertura pero baja extraversión, disfrutas de obras que invitan a la contemplación profunda "
-                    "y el procesamiento interno de ideas. Prefieres experiencias artísticas que te permiten sumergirte en "
-                    "mundos internos y explorar conceptos abstractos sin la necesidad de estímulos externos intensos."
-                ),
-                "recommendations": [
-                    "cine contemplativo",
-                    "música ambient",
-                    "literatura filosófica",
-                    "arte minimalista",
-                    "juegos narrativos lentos",
-                ],
-            }
-        if o > 4 and e > 3.5:
-            return {
-                "profile": "Explorador Social",
-                "description": (
-                    "Combinas una mente abierta con una naturaleza extrovertida, lo que te convierte en un verdadero "
-                    "explorador del arte. Te encanta descubrir nuevas formas de expresión artística y compartir estas "
-                    "experiencias con otros. Buscas constantemente obras innovadoras que amplíen tus horizontes y que "
-                    "puedas discutir y disfrutar en comunidad."
-                ),
-                "recommendations": [
-                    "cine independiente",
-                    "música alternativa",
-                    "literatura experimental",
-                    "arte contemporáneo",
-                    "juegos indie",
-                ],
-            }
-        if o > 4:
-            return {
-                "profile": "Explorador",
-                "description": (
-                    "Tu perfil artístico muestra una mente abierta y curiosa que se siente atraída por la innovación "
-                    "y la experimentación. Te encanta descubrir nuevas formas de expresión artística y experimentar con "
-                    "estilos que desafían las convenciones. Buscas constantemente experiencias que amplíen tus horizontes culturales."
-                ),
-                "recommendations": [
-                    "cine independiente",
-                    "música alternativa",
-                    "literatura experimental",
-                    "arte contemporáneo",
-                    "juegos indie",
-                ],
-            }
-        if c > 4 and a > 3.5:
-            return {
-                "profile": "Clásico Refinado",
-                "description": (
-                    "Tu personalidad artística se inclina hacia obras bien estructuradas y que transmiten valores positivos. "
-                    "Con alta meticulosidad y simpatía, aprecias el arte que muestra maestría técnica y que comunica mensajes "
-                    "constructivos. Prefieres experiencias culturales que están bien ejecutadas y que te dejan con una sensación "
-                    "de satisfacción y armonía."
-                ),
-                "recommendations": [
-                    "cine clásico",
-                    "música clásica",
-                    "literatura canónica",
-                    "arte tradicional",
-                    "juegos con narrativa sólida",
-                ],
-            }
-        return {
-            "profile": "Equilibrado",
-            "description": (
-                "Tu perfil artístico es balanceado y versátil, mostrando apreciación tanto por lo clásico como por lo moderno. "
-                "Tienes la capacidad de disfrutar de una amplia variedad de experiencias culturales, adaptándote a diferentes "
-                "estilos y géneros según tu estado de ánimo y contexto. El arte que más te atrae es aquel que resuena contigo en el momento."
-            ),
-            "recommendations": [
-                "cine clásico y moderno",
-                "música variada",
-                "literatura diversa",
-                "arte tradicional y contemporáneo",
-                "juegos variados",
-            ],
-        }
-
     def generate_artistic_description(self, ocean_result: dict) -> dict[str, Any]:
         scores = ocean_result.get("scores")
         if not scores or not isinstance(scores, dict):
@@ -743,9 +633,13 @@ class DreamLodgeAIAgent:
         n = _trait_total(scores, "neuroticism")
         test_type = ocean_result.get("testType")
 
+        if not self._configured():
+            raise RuntimeError(
+                "GEMINI_API_KEY no está configurada en el servidor MCP; no hay descripción artística sin el modelo."
+            )
+
         logger.info(
-            "artistic_description: gemini_configured=%s totals O=%.2f C=%.2f E=%.2f A=%.2f N=%.2f testType=%s",
-            self._configured(),
+            "artistic_description: totals O=%.2f C=%.2f E=%.2f A=%.2f N=%.2f testType=%s",
             o,
             c,
             e,
@@ -791,30 +685,50 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
   "recommendations": ["recomendación 1", "recomendación 2", ...]
 }}"""
 
-        if self._configured():
-            try:
-                text = self.generate_with_gemini(
-                    prompt, purpose="descripción artística", timeout_ms=30000
-                )
-                m = re.search(r"\{[\s\S]*\}", text)
-                if m:
-                    parsed = json.loads(m.group(0))
-                    logger.info(
-                        "artistic_description: JSON de Gemini OK, profile=%s",
-                        parsed.get("profile"),
-                    )
-                    return parsed
-                logger.warning(
-                    "artistic_description: Gemini no devolvió JSON reconocible, primeros 200 chars: %s",
-                    (text or "")[:200],
-                )
-            except json.JSONDecodeError as ex:
-                logger.warning("artistic_description: JSON inválido de Gemini: %s", ex)
-            except Exception as ex:
-                logger.exception("artistic_description: error Gemini u otro: %s", ex)
+        try:
+            text = self.generate_with_gemini(
+                prompt, purpose="descripción artística", timeout_ms=30000
+            )
+        except Exception as ex:
+            logger.exception("artistic_description: fallo al llamar a Gemini: %s", ex)
+            raise RuntimeError(
+                "No se pudo generar la descripción con el modelo de IA. Revisa cuota, clave y modelos disponibles."
+            ) from ex
 
-        logger.info("artistic_description: usando fallback por reglas (scores)")
-        return self.generate_artistic_description_from_scores(scores, test_type)
+        m = re.search(r"\{[\s\S]*\}", text or "")
+        if not m:
+            logger.warning(
+                "artistic_description: respuesta sin JSON, primeros 300 chars: %s",
+                (text or "")[:300],
+            )
+            raise RuntimeError(
+                "El modelo no devolvió un JSON reconocible. Vuelve a intentarlo."
+            )
+
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError as ex:
+            logger.warning("artistic_description: JSON inválido: %s", ex)
+            raise RuntimeError("El modelo devolvió JSON inválido.") from ex
+
+        if not isinstance(parsed, dict):
+            raise RuntimeError("La respuesta del modelo no es un objeto JSON.")
+
+        profile = (parsed.get("profile") or "").strip()
+        description = (parsed.get("description") or "").strip()
+        if not profile or not description:
+            raise RuntimeError(
+                "La respuesta del modelo está incompleta (falta profile o description)."
+            )
+
+        rec = parsed.get("recommendations")
+        if rec is not None and not isinstance(rec, list):
+            raise RuntimeError("El campo recommendations debe ser una lista.")
+        if rec is None:
+            parsed["recommendations"] = []
+
+        logger.info("artistic_description: OK profile=%s", profile)
+        return parsed
 
 
 _agent: Optional[DreamLodgeAIAgent] = None

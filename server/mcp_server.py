@@ -174,7 +174,7 @@ def generate_artistic_description_tool(ocean_result_json: str) -> dict:
         return {"error": "ocean_result_json debe ser un objeto JSON"}
     try:
         return agent.generate_artistic_description(doc)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -287,6 +287,9 @@ async def http_artistic_description(request: Request) -> JSONResponse:
     except ValueError as e:
         log.warning("artistic-description: validación %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        log.warning("artistic-description: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=503)
     except Exception as e:
         log.error(
             "artistic-description: error interno\n%s",
