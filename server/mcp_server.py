@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 import os
 import sys
+import traceback
 from typing import Any, Optional
 
 from starlette.requests import Request
@@ -15,6 +17,14 @@ from ai_agent import get_ai_agent
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+log = logging.getLogger("mcp.dreamlodge")
 
 mcp = FastMCP("Dream Lodge MCP Server")
 
@@ -204,8 +214,9 @@ async def http_chat_message(request: Request) -> JSONResponse:
     try:
         result = await asyncio.to_thread(_run)
     except Exception as e:
+        log.error("chat/message: error\n%s", traceback.format_exc())
         return JSONResponse(
-            {"ok": False, "error": str(e)},
+            {"ok": False, "error": str(e), "error_type": type(e).__name__},
             status_code=500,
         )
 
@@ -237,20 +248,34 @@ async def http_chat_message(request: Request) -> JSONResponse:
 async def http_artistic_description(request: Request) -> JSONResponse:
     err = _check_internal_secret(request)
     if err:
+        log.warning("artistic-description: rechazado por secreto interno")
         return err
     try:
         body = await request.json()
-    except Exception:
+    except Exception as parse_err:
+        log.warning("artistic-description: JSON inválido: %s", parse_err)
         return JSONResponse(
             {"ok": False, "error": "Cuerpo JSON inválido"}, status_code=400
         )
 
     ocean_result = body.get("oceanResult")
     if not isinstance(ocean_result, dict):
+        log.warning(
+            "artistic-description: oceanResult tipo=%s",
+            type(ocean_result).__name__,
+        )
         return JSONResponse(
             {"ok": False, "error": "oceanResult es requerido y debe ser un objeto"},
             status_code=400,
         )
+
+    scores = ocean_result.get("scores")
+    log.info(
+        "artistic-description: recibido entityType=%s testType=%s scores_keys=%s",
+        ocean_result.get("entityType"),
+        ocean_result.get("testType"),
+        list(scores.keys()) if isinstance(scores, dict) else type(scores).__name__,
+    )
 
     agent = get_ai_agent()
 
@@ -260,10 +285,26 @@ async def http_artistic_description(request: Request) -> JSONResponse:
     try:
         data = await asyncio.to_thread(_run)
     except ValueError as e:
+        log.warning("artistic-description: validación %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        log.error(
+            "artistic-description: error interno\n%s",
+            traceback.format_exc(),
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": str(e) or type(e).__name__,
+                "error_type": type(e).__name__,
+            },
+            status_code=500,
+        )
 
+    log.info(
+        "artistic-description: OK profile=%s",
+        (data or {}).get("profile"),
+    )
     return JSONResponse({"ok": True, "data": data})
 
 

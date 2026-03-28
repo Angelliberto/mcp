@@ -4,6 +4,7 @@ Agente IA Dream Lodge: Gemini + herramientas Mongo (lógica migrada desde aiAgen
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import unicodedata
@@ -12,6 +13,25 @@ from typing import Any, Optional
 
 import dreamlodge_db as db
 from system_prompts import build_system_prompt
+
+logger = logging.getLogger("dreamlodge.ai")
+
+
+def _trait_total(scores: dict, key: str) -> float:
+    """Extrae el total 0–5 de un rasgo OCEAN aunque venga como dict o número."""
+    v = scores.get(key)
+    if isinstance(v, dict):
+        t = v.get("total")
+        try:
+            return float(t) if t is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    if isinstance(v, (int, float)):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
 
 try:
     import google.generativeai as genai
@@ -600,11 +620,11 @@ class DreamLodgeAIAgent:
     def generate_artistic_description_from_scores(
         self, scores: dict, test_type: Optional[str]
     ) -> dict[str, Any]:
-        o = (scores.get("openness") or {}).get("total") or 0
-        e = (scores.get("extraversion") or {}).get("total") or 0
-        n = (scores.get("neuroticism") or {}).get("total") or 0
-        c = (scores.get("conscientiousness") or {}).get("total") or 0
-        a = (scores.get("agreeableness") or {}).get("total") or 0
+        o = _trait_total(scores, "openness")
+        e = _trait_total(scores, "extraversion")
+        n = _trait_total(scores, "neuroticism")
+        c = _trait_total(scores, "conscientiousness")
+        a = _trait_total(scores, "agreeableness")
 
         if o > 4 and n > 3.5:
             return {
@@ -709,15 +729,30 @@ class DreamLodgeAIAgent:
 
     def generate_artistic_description(self, ocean_result: dict) -> dict[str, Any]:
         scores = ocean_result.get("scores")
-        if not scores:
+        if not scores or not isinstance(scores, dict):
+            logger.warning(
+                "generate_artistic_description: scores ausente o no es dict, keys ocean=%s",
+                list(ocean_result.keys()) if isinstance(ocean_result, dict) else type(ocean_result),
+            )
             raise ValueError("Resultados OCEAN no válidos")
 
-        o = scores.get("openness", {}).get("total", 0)
-        c = scores.get("conscientiousness", {}).get("total", 0)
-        e = scores.get("extraversion", {}).get("total", 0)
-        a = scores.get("agreeableness", {}).get("total", 0)
-        n = scores.get("neuroticism", {}).get("total", 0)
+        o = _trait_total(scores, "openness")
+        c = _trait_total(scores, "conscientiousness")
+        e = _trait_total(scores, "extraversion")
+        a = _trait_total(scores, "agreeableness")
+        n = _trait_total(scores, "neuroticism")
         test_type = ocean_result.get("testType")
+
+        logger.info(
+            "artistic_description: gemini_configured=%s totals O=%.2f C=%.2f E=%.2f A=%.2f N=%.2f testType=%s",
+            self._configured(),
+            o,
+            c,
+            e,
+            a,
+            n,
+            test_type,
+        )
 
         sub = ""
         if test_type == "deep":
@@ -763,10 +798,22 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
                 )
                 m = re.search(r"\{[\s\S]*\}", text)
                 if m:
-                    return json.loads(m.group(0))
+                    parsed = json.loads(m.group(0))
+                    logger.info(
+                        "artistic_description: JSON de Gemini OK, profile=%s",
+                        parsed.get("profile"),
+                    )
+                    return parsed
+                logger.warning(
+                    "artistic_description: Gemini no devolvió JSON reconocible, primeros 200 chars: %s",
+                    (text or "")[:200],
+                )
+            except json.JSONDecodeError as ex:
+                logger.warning("artistic_description: JSON inválido de Gemini: %s", ex)
             except Exception as ex:
-                print(f"Error generando descripción artística con Gemini: {ex}")
+                logger.exception("artistic_description: error Gemini u otro: %s", ex)
 
+        logger.info("artistic_description: usando fallback por reglas (scores)")
         return self.generate_artistic_description_from_scores(scores, test_type)
 
 
