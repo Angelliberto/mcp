@@ -59,10 +59,13 @@ except ImportError:
 
 
 def _env_models() -> list[str]:
+    """Orden: env GEMINI_MODEL primero, luego modelos que Google sigue ofreciendo a cuentas nuevas."""
     raw = os.getenv("GEMINI_MODEL")
     candidates = [
         raw,
-        "gemini-2.0-flash",
+        # 2.5: recomendado para API key / nuevos proyectos (2.0-flash ya no para usuarios nuevos)
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
         "gemini-2.0-flash-lite",
         "gemini-1.5-flash",
         "gemini-1.5-pro",
@@ -114,6 +117,9 @@ class DreamLodgeAIAgent:
         return (
             s == 404
             or "not found" in msg
+            or "not_found" in msg
+            or "statuscode.not_found" in msg
+            or "no longer available" in msg
             or "not supported" in msg
             or "generatecontent" in msg
         )
