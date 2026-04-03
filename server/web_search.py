@@ -165,16 +165,13 @@ def serper_search(query: str, *, num: int = 8) -> list[dict[str, str]]:
     return []
 
 
-def build_curator_context_from_serper(
-    personality_line: str, saved_tags: list[str]
-) -> tuple[str, bool]:
+def build_curator_context_from_serper(personality_line: str) -> tuple[str, bool]:
     """
     Ejecuta 2–3 consultas acotadas y concatena snippets para el prompt del curador.
     """
-    tag_part = ", ".join(saved_tags[:8]) if saved_tags else ""
     queries = [
         f"cultural recommendations personality traits film series music books games {personality_line[:120]}",
-        f"best acclaimed albums films novels video games art lovers {tag_part}"[:240],
+        "best acclaimed albums films novels video games art lovers curated lists",
     ]
     chunks: list[str] = []
     for q in queries:
@@ -200,7 +197,7 @@ def build_artistic_web_context(
 ) -> tuple[str, bool]:
     """
     Consultas Serper orientadas a obras culturales concretas alineadas al perfil OCEAN
-    (para descripción artística + suggestedWorks + tags).
+    (para descripción artística + suggestedWorks).
     """
     traits = (
         f"openness {o:.1f} conscientiousness {c:.1f} extraversion {e:.1f} "

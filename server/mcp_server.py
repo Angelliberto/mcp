@@ -55,7 +55,7 @@ def search_artworks(
         category: cine, música, literatura, arte-visual, videojuegos
         source: IGDB, TMDB, GoogleBooks, MetMuseum, ChicagoArt, Spotify
         title: Título o parte del título
-        genre: Término de género (búsqueda en descripción/tags/genre)
+        genre: Término de género (búsqueda en descripción o campo genre)
         limit: Máximo de resultados (default 20)
         page: Página (default 1)
     """
@@ -343,10 +343,6 @@ async def http_feed_personalized_curate(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    saved_tags = body.get("savedTags") or []
-    if not isinstance(saved_tags, list):
-        saved_tags = []
-
     artistic_profile = body.get("artisticProfile")
     if artistic_profile is not None and not isinstance(artistic_profile, dict):
         artistic_profile = None
@@ -356,7 +352,6 @@ async def http_feed_personalized_curate(request: Request) -> JSONResponse:
     def _run():
         return agent.curate_personalized_feed(
             ocean_result,
-            saved_tags=saved_tags,
             artistic_profile=artistic_profile,
         )
 

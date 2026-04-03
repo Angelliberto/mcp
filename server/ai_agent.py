@@ -13,7 +13,6 @@ from typing import Any, Optional
 
 import dreamlodge_db as db
 from system_prompts import build_system_prompt
-from tag_catalog import format_catalog_for_prompt, slugify_hashtag
 from web_search import build_artistic_web_context, build_curator_context_from_serper
 
 logger = logging.getLogger("dreamlodge.ai")
@@ -589,12 +588,8 @@ class DreamLodgeAIAgent:
         ocean_results: list | None = None
         favorites: list = []
 
-        saved_tags: list = []
         if user_id:
             user_info = db.get_user_basic_info(user_id)
-            st = db.get_user_saved_tags(user_id)
-            if st.get("data") and isinstance(st["data"], list):
-                saved_tags = st["data"]
             if user_info:
                 o = db.get_user_ocean_results(user_id)
                 if o.get("data"):
@@ -608,7 +603,6 @@ class DreamLodgeAIAgent:
             ocean_results=ocean_results or [],
             favorites=favorites,
             user_info=user_info,
-            saved_tags=saved_tags,
         )
 
         tools_to_use = self.analyze_message_and_select_tools(
@@ -757,7 +751,6 @@ class DreamLodgeAIAgent:
         web_block, web_used = build_artistic_web_context(
             o, c, e, a, n, test_type, sub[:400] if sub else ""
         )
-        catalog_hint = format_catalog_for_prompt(55)
 
         logger.info(
             "artistic_description: web_context_chars=%s web_used=%s",
@@ -774,12 +767,7 @@ Perfil numérico (0-5):
 Fragmentos web (títulos y listas; prioriza obras que aparezcan aquí si encajan con OCEAN):
 {web_block or "(Sin resultados web: elige obras muy conocidas y coherentes con el perfil.)"}
 
-Referencia breve de estilos de hashtag (solo como guía de forma, no inventes etiquetas vacías):
-{catalog_hint}
-
-PASOS (en tu razonamiento interno, no los escribas):
-1) Elige 10-16 obras reales mezclando categorías.
-2) suggestedTags (6-12): géneros/estilos que describan ESAS obras (p. ej. drama, jazz, rpg), en formato slug corto como en metadatos de streaming; NO uses adjetivos de personalidad sueltos ("introvertido", "sensible") como tags. Puedes mezclar #opcional.
+En tu razonamiento interno (no lo escribas): elige 10-16 obras reales mezclando categorías.
 
 Responde SOLO JSON válido, sin markdown:
 {{
@@ -788,8 +776,7 @@ Responde SOLO JSON válido, sin markdown:
   "recommendations": ["3-6 frases cortas; puede incluir nombres de obras"],
   "suggestedWorks": [
     {{"category":"cine","title":"Título exacto buscable","creator":"director o autor opcional"}}
-  ],
-  "suggestedTags": ["#drama", "jazz", "rpg"]
+  ]
 }}
 
 Reglas suggestedWorks:
@@ -841,38 +828,6 @@ Reglas suggestedWorks:
         if rec is None:
             parsed["recommendations"] = []
 
-        tags_raw = parsed.get("suggestedTags")
-        if tags_raw is not None and not isinstance(tags_raw, list):
-            raise RuntimeError("El campo suggestedTags debe ser una lista.")
-        normalized_tags: list[dict[str, str]] = []
-        if tags_raw:
-            for item in tags_raw[:16]:
-                raw_str = ""
-                if isinstance(item, str):
-                    raw_str = item.strip()
-                elif isinstance(item, dict):
-                    raw_str = (
-                        item.get("name")
-                        or item.get("tag")
-                        or item.get("hashtag")
-                        or ""
-                    )
-                    raw_str = str(raw_str).strip()
-                if not raw_str:
-                    continue
-                slug = slugify_hashtag(raw_str)
-                if len(slug) < 2:
-                    continue
-                normalized_tags.append({"name": slug, "aiHint": ""})
-        seen_slugs: set[str] = set()
-        deduped: list[dict[str, str]] = []
-        for t in normalized_tags:
-            s = t["name"]
-            if s not in seen_slugs:
-                seen_slugs.add(s)
-                deduped.append(t)
-        parsed["suggestedTags"] = deduped
-
         raw_works = parsed.get("suggestedWorks")
         if isinstance(raw_works, list):
             works = normalize_work_candidate_rows(raw_works, max_items=20)
@@ -892,34 +847,16 @@ Reglas suggestedWorks:
             parsed["suggestedWorks"] = []
 
         logger.info(
-            "artistic_description: OK profile=%s tags=%s web_used=%s works=%s",
+            "artistic_description: OK profile=%s web_used=%s works=%s",
             profile,
-            len(deduped),
             web_used,
             len(parsed.get("suggestedWorks") or []),
         )
         return parsed
 
-    @staticmethod
-    def _normalize_saved_tags_list(raw: Any) -> list[str]:
-        out: list[str] = []
-        if not raw:
-            return out
-        for t in raw:
-            if isinstance(t, str):
-                s = slugify_hashtag(t)
-            elif isinstance(t, dict) and t.get("name"):
-                s = slugify_hashtag(str(t["name"]))
-            else:
-                continue
-            if len(s) >= 2 and s not in out:
-                out.append(s)
-        return out[:24]
-
     def curate_personalized_feed(
         self,
         ocean_result: dict,
-        saved_tags: list | None = None,
         artistic_profile: dict | None = None,
     ) -> dict[str, Any]:
         """
@@ -939,15 +876,11 @@ Reglas suggestedWorks:
         a = _trait_total(scores, "agreeableness")
         n = _trait_total(scores, "neuroticism")
 
-        tags_norm = self._normalize_saved_tags_list(saved_tags)
-
         personality_line = (
             f"openness {o:.1f} conscientiousness {c:.1f} extraversion {e:.1f} "
             f"agreeableness {a:.1f} neuroticism {n:.1f}"
         )
-        web_block, web_used = build_curator_context_from_serper(
-            personality_line, tags_norm
-        )
+        web_block, web_used = build_curator_context_from_serper(personality_line)
 
         art_extra = ""
         if artistic_profile and isinstance(artistic_profile, dict):
@@ -961,14 +894,10 @@ Reglas suggestedWorks:
                 )
             art_extra = f"\nPerfil artístico existente: {prof}\n{desc}\n{rec_line}\n"
 
-        tags_line = ", ".join(f"#{t}" for t in tags_norm) if tags_norm else "(ninguno)"
-
         prompt = f"""Eres curador cultural para una app de descubrimiento (cine, series, música, libros, videojuegos, arte).
 
 Perfil OCEAN del usuario (escala 0-5):
 - Apertura {o:.2f}, Responsabilidad {c:.2f}, Extraversión {e:.2f}, Amabilidad {a:.2f}, Neuroticismo {n:.2f}
-
-Hashtags que el usuario ya guardó: {tags_line}
 {art_extra}
 Fragmentos recientes de búsqueda web (pueden incluir títulos reales; úsalos si encajan con el perfil):
 {web_block or "(Sin resultados web: elige obras clásicas o muy conocidas, títulos exactos en español o en el título original más reconocible.)"}

@@ -273,38 +273,3 @@ def get_user_basic_info(user_id: str) -> Optional[dict]:
     except Exception:
         return None
 
-
-def get_user_saved_tags(user_id: str) -> dict:
-    """Tags de recomendación guardados por el usuario (colección `tags`, campo savedTags en users)."""
-    try:
-        db = get_db()
-        users = db.users
-        tags_coll = db.tags
-        if not ObjectId.is_valid(user_id):
-            return {"error": "ID de usuario inválido"}
-        user = users.find_one({"_id": ObjectId(user_id)})
-        if not user:
-            return {"error": "Usuario no encontrado"}
-        raw_ids = user.get("savedTags") or []
-        if not raw_ids:
-            return {"data": []}
-        object_ids: list = []
-        for i in raw_ids:
-            if isinstance(i, ObjectId):
-                object_ids.append(i)
-            elif isinstance(i, str) and ObjectId.is_valid(i):
-                object_ids.append(ObjectId(i))
-        if not object_ids:
-            return {"data": []}
-        found = list(
-            tags_coll.find({"_id": {"$in": object_ids}, "deleted": {"$ne": True}})
-        )
-        by_id = {d["_id"]: d for d in found}
-        ordered = []
-        for oid in object_ids:
-            doc = by_id.get(oid)
-            if doc:
-                ordered.append(doc)
-        return {"data": serialize_object(ordered)}
-    except Exception as e:
-        return {"error": str(e)}
