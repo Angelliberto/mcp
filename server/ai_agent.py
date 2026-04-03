@@ -14,9 +14,67 @@ from typing import Any, Optional
 import dreamlodge_db as db
 from system_prompts import build_system_prompt
 from tag_catalog import format_catalog_for_prompt, slugify_hashtag
-from web_search import build_curator_context_from_serper
+from web_search import build_artistic_web_context, build_curator_context_from_serper
 
 logger = logging.getLogger("dreamlodge.ai")
+
+_WORK_CAT_ALLOWED = frozenset(
+    {"cine", "musica", "literatura", "videojuegos", "arte-visual"}
+)
+_WORK_CAT_ALIAS = {
+    "pelicula": "cine",
+    "películas": "cine",
+    "series": "cine",
+    "serie": "cine",
+    "tv": "cine",
+    "film": "cine",
+    "movie": "cine",
+    "música": "musica",
+    "music": "musica",
+    "album": "musica",
+    "libro": "literatura",
+    "libros": "literatura",
+    "book": "literatura",
+    "juego": "videojuegos",
+    "juegos": "videojuegos",
+    "game": "videojuegos",
+    "games": "videojuegos",
+    "arte": "arte-visual",
+    "art": "arte-visual",
+    "pintura": "arte-visual",
+}
+
+
+def normalize_work_candidate_rows(
+    raw_list: Any, *, max_items: int = 24
+) -> list[dict[str, str]]:
+    """Normaliza filas {category, title, creator?} para feed y descripción artística."""
+    if not isinstance(raw_list, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw_list[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        cat = str(item.get("category") or "").strip().lower()
+        cat = cat.replace(" ", "").replace("_", "-")
+        if cat in _WORK_CAT_ALIAS:
+            cat = _WORK_CAT_ALIAS[cat]
+        if cat not in _WORK_CAT_ALLOWED:
+            continue
+        title = str(item.get("title") or "").strip()
+        if len(title) < 2:
+            continue
+        creator = str(item.get("creator") or "").strip()
+        key = (cat, title.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        row: dict[str, str] = {"category": cat, "title": title[:200]}
+        if creator:
+            row["creator"] = creator[:120]
+        cleaned.append(row)
+    return cleaned
 
 
 def _format_exception_for_client(exc: BaseException, max_len: int = 800) -> str:
@@ -696,38 +754,51 @@ class DreamLodgeAIAgent:
             if parts:
                 sub = "Subfacetas detalladas:\n" + "\n".join(parts) + "\n"
 
-        catalog_block = format_catalog_for_prompt(95)
+        web_block, web_used = build_artistic_web_context(
+            o, c, e, a, n, test_type, sub[:400] if sub else ""
+        )
+        catalog_hint = format_catalog_for_prompt(55)
 
-        prompt = f"""Genera una descripción artística personalizada para un usuario basándote en sus resultados del test de personalidad OCEAN (Big Five).
+        logger.info(
+            "artistic_description: web_context_chars=%s web_used=%s",
+            len(web_block or ""),
+            web_used,
+        )
 
-Resultados del test:
-- Apertura a experiencias (Openness): {float(o):.2f}/5
-- Meticulosidad (Conscientiousness): {float(c):.2f}/5
-- Extroversión (Extraversion): {float(e):.2f}/5
-- Simpatía (Agreeableness): {float(a):.2f}/5
-- Neurosis (Neuroticism): {float(n):.2f}/5
+        prompt = f"""Eres curador cultural. El usuario hizo el test OCEAN (Big Five). Tu tarea es proponer OBRAS CONCRETAS (reales, buscables en TMDB, Spotify, Google Books, IGDB o museos) que encajen con su perfil, usando los fragmentos de búsqueda web cuando aporten títulos o listas fiables.
+
+Perfil numérico (0-5):
+- Apertura {float(o):.2f}, Responsabilidad {float(c):.2f}, Extraversión {float(e):.2f}, Amabilidad {float(a):.2f}, Neuroticismo {float(n):.2f}
 
 {sub}
-REFERENCIA DE HASHTAGS (géneros reales TMDB en español si hay API key, más categorías culturales; úsalos como guía — mismo estilo que tags de obras / DeviantArt):
-{catalog_block}
+Fragmentos web (títulos y listas; prioriza obras que aparezcan aquí si encajan con OCEAN):
+{web_block or "(Sin resultados web: elige obras muy conocidas y coherentes con el perfil.)"}
 
-Genera una descripción artística que incluya:
-1. Un perfil artístico (nombre corto, ej: "Explorador", "Contemplativo", "Existencial", "Equilibrado")
-2. Una descripción detallada (2-3 párrafos) que explique cómo estos rasgos de personalidad influyen en sus preferencias artísticas
-3. Una lista de recomendaciones específicas de géneros o tipos de contenido cultural que le gustarían
-4. Entre 6 y 12 suggestedTags: hashtags MUY SIMPLES, solo género o categoría corta (como los géneros de películas, música o juegos en metadatos). Formato estilo DeviantArt: una sola pieza sin espacios, minúsculas, opcional # en el string; ej. #drama, #jazz, #rpg, #surrealismo. PROHIBIDO: frases largas, explicaciones o "aiHint". Prioriza tags del catálogo de referencia cuando encajen con el perfil.
+Referencia breve de estilos de hashtag (solo como guía de forma, no inventes etiquetas vacías):
+{catalog_hint}
 
-IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto adicional antes o después:
+PASOS (en tu razonamiento interno, no los escribas):
+1) Elige 10-16 obras reales mezclando categorías.
+2) suggestedTags (6-12): géneros/estilos que describan ESAS obras (p. ej. drama, jazz, rpg), en formato slug corto como en metadatos de streaming; NO uses adjetivos de personalidad sueltos ("introvertido", "sensible") como tags. Puedes mezclar #opcional.
+
+Responde SOLO JSON válido, sin markdown:
 {{
-  "profile": "nombre del perfil",
-  "description": "descripción detallada...",
-  "recommendations": ["recomendación 1", "recomendación 2", ...],
-  "suggestedTags": ["#drama", "#jazz", "#conceptart", "#rpg"]
-}}"""
+  "profile": "nombre corto del perfil artístico",
+  "description": "2-3 párrafos en español, tono cálido",
+  "recommendations": ["3-6 frases cortas; puede incluir nombres de obras"],
+  "suggestedWorks": [
+    {{"category":"cine","title":"Título exacto buscable","creator":"director o autor opcional"}}
+  ],
+  "suggestedTags": ["#drama", "jazz", "rpg"]
+}}
+
+Reglas suggestedWorks:
+- category exactamente: cine, musica, literatura, videojuegos, arte-visual
+- Títulos reales; mezcla categorías."""
 
         try:
             text = self.generate_with_gemini(
-                prompt, purpose="descripción artística", timeout_ms=30000
+                prompt, purpose="descripción artística", timeout_ms=55000
             )
         except Exception as ex:
             logger.exception("artistic_description: fallo al llamar a Gemini")
@@ -802,7 +873,31 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
                 deduped.append(t)
         parsed["suggestedTags"] = deduped
 
-        logger.info("artistic_description: OK profile=%s tags=%s", profile, len(deduped))
+        raw_works = parsed.get("suggestedWorks")
+        if isinstance(raw_works, list):
+            works = normalize_work_candidate_rows(raw_works, max_items=20)
+            parsed["suggestedWorks"] = works
+            for w in works:
+                logger.info(
+                    "artistic_suggested_work: category=%s title=%s creator=%s",
+                    w.get("category"),
+                    w.get("title"),
+                    w.get("creator", "") or "",
+                )
+            logger.info(
+                "artistic_suggested_works_summary: %s",
+                json.dumps(works, ensure_ascii=False),
+            )
+        else:
+            parsed["suggestedWorks"] = []
+
+        logger.info(
+            "artistic_description: OK profile=%s tags=%s web_used=%s works=%s",
+            profile,
+            len(deduped),
+            web_used,
+            len(parsed.get("suggestedWorks") or []),
+        )
         return parsed
 
     @staticmethod
@@ -916,55 +1011,7 @@ Reglas estrictas:
         if not isinstance(raw_list, list):
             return {"candidates": [], "webSearchUsed": web_used, "reason": "no_candidates"}
 
-        allowed = frozenset(
-            {"cine", "musica", "literatura", "videojuegos", "arte-visual"}
-        )
-        alias = {
-            "pelicula": "cine",
-            "películas": "cine",
-            "series": "cine",
-            "serie": "cine",
-            "tv": "cine",
-            "film": "cine",
-            "movie": "cine",
-            "música": "musica",
-            "music": "musica",
-            "album": "musica",
-            "libro": "literatura",
-            "libros": "literatura",
-            "book": "literatura",
-            "juego": "videojuegos",
-            "juegos": "videojuegos",
-            "game": "videojuegos",
-            "games": "videojuegos",
-            "arte": "arte-visual",
-            "art": "arte-visual",
-            "pintura": "arte-visual",
-        }
-
-        cleaned: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for item in raw_list[:24]:
-            if not isinstance(item, dict):
-                continue
-            cat = str(item.get("category") or "").strip().lower()
-            cat = cat.replace(" ", "").replace("_", "-")
-            if cat in alias:
-                cat = alias[cat]
-            if cat not in allowed:
-                continue
-            title = str(item.get("title") or "").strip()
-            if len(title) < 2:
-                continue
-            creator = str(item.get("creator") or "").strip()
-            key = (cat, title.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            row: dict[str, str] = {"category": cat, "title": title[:200]}
-            if creator:
-                row["creator"] = creator[:120]
-            cleaned.append(row)
+        cleaned = normalize_work_candidate_rows(raw_list, max_items=24)
 
         logger.info(
             "curate_feed: %s candidatos web_used=%s", len(cleaned), web_used

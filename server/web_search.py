@@ -88,3 +88,43 @@ def build_curator_context_from_serper(
     if len(text) > 6000:
         text = text[:6000] + "\n…"
     return text, True
+
+
+def build_artistic_web_context(
+    o: float,
+    c: float,
+    e: float,
+    a: float,
+    n: float,
+    test_type: object,
+    subfacets_preview: str,
+) -> tuple[str, bool]:
+    """
+    Consultas Serper orientadas a obras culturales concretas alineadas al perfil OCEAN
+    (para descripción artística + suggestedWorks + tags).
+    """
+    traits = (
+        f"openness {o:.1f} conscientiousness {c:.1f} extraversion {e:.1f} "
+        f"agreeableness {a:.1f} neuroticism {n:.1f} test {test_type}"
+    )
+    queries = [
+        f"best films series novels albums video games art personality taste {traits[:140]}",
+        f"acclaimed cultural masterpieces movies books music games emotional depth {traits[:120]}",
+        f"obras culturales recomendadas cine literatura música juegos arte personalidad {traits[:130]}",
+    ]
+    if (subfacets_preview or "").strip():
+        queries.append(
+            f"curation lists film literature music games psychology {subfacets_preview[:160]}"
+        )
+
+    chunks: list[str] = []
+    for q in queries:
+        for row in serper_search(q, num=7):
+            line = f"- {row['title']}: {row['snippet']}"
+            chunks.append(line[:520])
+    if not chunks:
+        return "", False
+    text = "\n".join(chunks)
+    if len(text) > 7000:
+        text = text[:7000] + "\n…"
+    return text, True
