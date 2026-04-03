@@ -173,26 +173,169 @@ def _tmdb_genre_slugs(api_key: str) -> list[str]:
     return slugs
 
 
+# Seeds históricos de Spotify (GET /recommendations/available-genre-seeds está deprecado y suele responder 404).
+_SPOTIFY_SEED_GENRES_STATIC: tuple[str, ...] = (
+    "acoustic",
+    "afrobeat",
+    "alt-rock",
+    "alternative",
+    "ambient",
+    "blues",
+    "chill",
+    "classical",
+    "club",
+    "comedy",
+    "country",
+    "dance",
+    "dancehall",
+    "death-metal",
+    "deep-house",
+    "disco",
+    "disney",
+    "drum-and-bass",
+    "dub",
+    "dubstep",
+    "edm",
+    "electro",
+    "electronic",
+    "emo",
+    "folk",
+    "forro",
+    "french",
+    "funk",
+    "garage",
+    "gospel",
+    "goth",
+    "grindcore",
+    "groove",
+    "grunge",
+    "guitar",
+    "happy",
+    "hard-rock",
+    "hardcore",
+    "hardstyle",
+    "heavy-metal",
+    "hip-hop",
+    "holidays",
+    "honky-tonk",
+    "house",
+    "idm",
+    "indian",
+    "indie",
+    "indie-pop",
+    "industrial",
+    "iranian",
+    "j-dance",
+    "j-idol",
+    "j-pop",
+    "j-rock",
+    "jazz",
+    "k-pop",
+    "kids",
+    "latin",
+    "latino",
+    "malay",
+    "mandopop",
+    "metal",
+    "metalcore",
+    "minimal-techno",
+    "mpb",
+    "new-age",
+    "opera",
+    "pagode",
+    "party",
+    "piano",
+    "pop",
+    "power-pop",
+    "progressive-house",
+    "psych-rock",
+    "punk",
+    "punk-rock",
+    "r-n-b",
+    "reggae",
+    "reggaeton",
+    "road-trip",
+    "rock",
+    "rock-n-roll",
+    "romance",
+    "sad",
+    "salsa",
+    "samba",
+    "sertanejo",
+    "show-tunes",
+    "singer-songwriter",
+    "sleep",
+    "songwriter",
+    "soul",
+    "spanish",
+    "study",
+    "summer",
+    "synth-pop",
+    "tango",
+    "techno",
+    "trance",
+    "trip-hop",
+    "turkish",
+    "work-out",
+    "world-music",
+)
+
+
+def _spotify_genre_seeds_static_fallback() -> list[str]:
+    out: list[str] = []
+    for x in _SPOTIFY_SEED_GENRES_STATIC:
+        s = slugify_hashtag(x.replace("-", " "))
+        if len(s) >= 2:
+            out.append(s)
+    return out
+
+
 def _spotify_genre_seed_slugs(access_token: str) -> list[str]:
+    static = _spotify_genre_seeds_static_fallback()
     if not access_token:
-        return []
+        return static
+
     url = "https://api.spotify.com/v1/recommendations/available-genre-seeds"
-    payload = _fetch_json(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20.0) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        payload = json_lib.loads(raw)
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 410, 403):
+            logger.info(
+                "tag_catalog: Spotify genre-seeds HTTP %s (endpoint deprecado o restringido); "
+                "usando %s seeds estáticos",
+                e.code,
+                len(static),
+            )
+        else:
+            logger.warning(
+                "tag_catalog: Spotify genre-seeds HTTP %s — usando estática", e.code
+            )
+        return static
+    except (urllib.error.URLError, TimeoutError, json_lib.JSONDecodeError, ValueError) as e:
+        logger.warning("tag_catalog: Spotify genre-seeds — %s; usando estática", e)
+        return static
+
     if not isinstance(payload, dict):
-        return []
+        return static
     seeds = payload.get("genres")
-    if not isinstance(seeds, list):
-        return []
+    if not isinstance(seeds, list) or len(seeds) == 0:
+        return static
     out: list[str] = []
     for x in seeds:
         if isinstance(x, str):
             s = slugify_hashtag(x.replace("-", " "))
             if len(s) >= 2:
                 out.append(s)
-    return out
+    return out if out else static
 
 
 def _igdb_names(

@@ -37,6 +37,22 @@ def serper_search(query: str, *, num: int = 8) -> list[dict[str, str]]:
         with urllib.request.urlopen(req, timeout=25) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
         data = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = (e.read() or b"").decode("utf-8", errors="replace")[:400]
+        except Exception:
+            pass
+        hint = ""
+        if e.code == 403:
+            hint = (
+                " (403: clave inválida, cuenta sin créditos, o IP no permitida en serper.dev; "
+                "el feed sigue sin snippets web)"
+            )
+        elif e.code == 401:
+            hint = " (401: revisa SERPER_API_KEY en .env del MCP)"
+        logger.warning("serper_search HTTP %s %s%s — cuerpo: %s", e.code, e.reason, hint, body or "(vacío)")
+        return []
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
         logger.warning("serper_search falló: %s", e)
         return []
