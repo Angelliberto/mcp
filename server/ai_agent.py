@@ -529,8 +529,12 @@ class DreamLodgeAIAgent:
         ocean_results: list | None = None
         favorites: list = []
 
+        saved_tags: list = []
         if user_id:
             user_info = db.get_user_basic_info(user_id)
+            st = db.get_user_saved_tags(user_id)
+            if st.get("data") and isinstance(st["data"], list):
+                saved_tags = st["data"]
             if user_info:
                 o = db.get_user_ocean_results(user_id)
                 if o.get("data"):
@@ -544,6 +548,7 @@ class DreamLodgeAIAgent:
             ocean_results=ocean_results or [],
             favorites=favorites,
             user_info=user_info,
+            saved_tags=saved_tags,
         )
 
         tools_to_use = self.analyze_message_and_select_tools(
@@ -703,12 +708,17 @@ Genera una descripción artística que incluya:
 1. Un perfil artístico (nombre corto, ej: "Explorador", "Contemplativo", "Existencial", "Equilibrado")
 2. Una descripción detallada (2-3 párrafos) que explique cómo estos rasgos de personalidad influyen en sus preferencias artísticas
 3. Una lista de recomendaciones específicas de géneros o tipos de contenido cultural que le gustarían
+4. Entre 5 y 10 etiquetas cortas ("suggestedTags") que el usuario pueda guardar en su perfil para guiar recomendaciones futuras. Cada etiqueta debe tener "name" (2-4 palabras en español, memorable) y "aiHint" (una frase breve para la IA: tono, temas o criterios al recomendar).
 
 IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto adicional antes o después:
 {{
   "profile": "nombre del perfil",
   "description": "descripción detallada...",
-  "recommendations": ["recomendación 1", "recomendación 2", ...]
+  "recommendations": ["recomendación 1", "recomendación 2", ...],
+  "suggestedTags": [
+    {{ "name": "Cine reflexivo", "aiHint": "Historias lentas con ambigüedad moral" }},
+    {{ "name": "Neo-noir", "aiHint": "Visuales oscuros e ironía" }}
+  ]
 }}"""
 
         try:
@@ -756,7 +766,25 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
         if rec is None:
             parsed["recommendations"] = []
 
-        logger.info("artistic_description: OK profile=%s", profile)
+        tags_raw = parsed.get("suggestedTags")
+        if tags_raw is not None and not isinstance(tags_raw, list):
+            raise RuntimeError("El campo suggestedTags debe ser una lista.")
+        normalized_tags: list[dict[str, str]] = []
+        if tags_raw:
+            for item in tags_raw[:12]:
+                if isinstance(item, str):
+                    n = item.strip()
+                    if n:
+                        normalized_tags.append({"name": n, "aiHint": ""})
+                elif isinstance(item, dict):
+                    n = (item.get("name") or "").strip()
+                    if not n:
+                        continue
+                    h = (item.get("aiHint") or item.get("ai_hint") or "").strip()
+                    normalized_tags.append({"name": n, "aiHint": h})
+        parsed["suggestedTags"] = normalized_tags
+
+        logger.info("artistic_description: OK profile=%s tags=%s", profile, len(normalized_tags))
         return parsed
 
 

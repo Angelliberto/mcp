@@ -121,15 +121,43 @@ El usuario ha marcado las siguientes obras como favoritas:
 Usa esta información para entender los gustos del usuario y hacer recomendaciones similares o complementarias."""
 
 
+def _saved_tags_prompt(saved_tags: list) -> str:
+    if not saved_tags:
+        return ""
+    lines = []
+    for item in saved_tags[:16]:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        hint = (item.get("aiHint") or "").strip()
+        if hint:
+            lines.append(f'- "{name}" — {hint}')
+        else:
+            lines.append(f'- "{name}"')
+    if not lines:
+        return ""
+    return f"""
+
+ETIQUETAS DE INTERÉS GUARDADAS POR EL USUARIO:
+El usuario eligió y guardó estas etiquetas (definen tono, temas y estilo para recomendaciones):
+{chr(10).join(lines)}
+
+Prioriza estas preferencias al recomendar o comentar obras: vocabulario, atmósfera, géneros y autores afines. Si pide algo genérico, alinéalo con estas etiquetas."""
+
+
 def build_system_prompt(
     context_items=None,
     ocean_results=None,
     favorites=None,
     user_info=None,
+    saved_tags=None,
 ) -> str:
     context_items = context_items or []
     ocean_results = ocean_results or []
     favorites = favorites or []
+    saved_tags = saved_tags or []
     prompt = SYSTEM_PROMPT
     if user_info:
         prompt += f"""
@@ -141,6 +169,8 @@ INFORMACIÓN DEL USUARIO:
         prompt += _ocean_prompt(ocean_results)
     if favorites:
         prompt += _favorites_prompt(favorites)
+    if saved_tags:
+        prompt += _saved_tags_prompt(saved_tags)
     if context_items:
         prompt += _context_prompt(context_items)
     return prompt
