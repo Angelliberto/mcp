@@ -59,49 +59,170 @@ Usa esta información para:
 - Responder preguntas específicas sobre estas obras
 - Entender mejor los gustos del usuario"""
 
+# Orden y etiquetas AB5C/IPIP — alineado con dreamlodge-frontend/src/constants/oceanTestCopy.ts
+_OCEAN_TRAIT_TITLES_ES: dict[str, str] = {
+    "openness": "Apertura a experiencias (Openness)",
+    "conscientiousness": "Meticulosidad (Conscientiousness)",
+    "extraversion": "Extroversión (Extraversion)",
+    "agreeableness": "Simpatía (Agreeableness)",
+    "neuroticism": "Neurosis / inestabilidad emocional (Neuroticism)",
+}
+
+_OCEAN_FACET_ORDER: dict[str, list[str]] = {
+    "openness": [
+        "intellect",
+        "ingenuity",
+        "reflection",
+        "competence",
+        "quickness",
+        "introspection",
+        "creativity",
+        "imagination",
+        "depth",
+    ],
+    "conscientiousness": [
+        "conscientiousness",
+        "efficiency",
+        "dutifulness",
+        "purposefulness",
+        "organization",
+        "cautiousness",
+        "rationality",
+        "perfectionism",
+        "orderliness",
+    ],
+    "extraversion": [
+        "gregariousness",
+        "friendliness",
+        "assertiveness",
+        "poise",
+        "leadership",
+        "provocativeness",
+        "self_disclosure",
+        "talkativeness",
+        "sociability",
+    ],
+    "agreeableness": [
+        "understanding",
+        "warmth",
+        "morality",
+        "pleasantness",
+        "empathy",
+        "cooperation",
+        "sympathy",
+        "tenderness",
+        "nurturance",
+    ],
+    "neuroticism": [
+        "stability",
+        "happiness",
+        "calmness",
+        "moderation",
+        "toughness",
+        "impulse_control",
+        "imperturbability",
+        "cool_headedness",
+        "tranquility",
+    ],
+}
+
+_FACET_LABELS_ES: dict[str, str] = {
+    "gregariousness": "Ambientes con mucha gente",
+    "friendliness": "Cercanía al iniciar contacto",
+    "assertiveness": "Decir lo que piensas con firmeza",
+    "poise": "Comodidad en contextos sociales nuevos",
+    "leadership": "Dirigir en grupo",
+    "provocativeness": "Debate y confrontación directa",
+    "self_disclosure": "Compartir lo personal",
+    "talkativeness": "Mucho hablar en la conversación",
+    "sociability": "Buscar compañía a menudo",
+    "understanding": "Escuchar y respetar lo ajeno",
+    "warmth": "Hacer sentir bienvenido",
+    "morality": "Honestidad y rectitud",
+    "pleasantness": "Poca dureza al criticar",
+    "empathy": "Captar lo que el otro necesita",
+    "cooperation": "Acordar en lugar de imponer",
+    "sympathy": "Conmoverte por el sufrimiento",
+    "tenderness": "Cariño en el trato",
+    "nurturance": "Cuidar y proteger activamente",
+    "conscientiousness": "Fiabilidad en lo prometido",
+    "efficiency": "Uso ordenado del tiempo y los pasos",
+    "dutifulness": "Sentido del deber y las normas",
+    "purposefulness": "Llegar hasta el final",
+    "organization": "Detalle y calidad del trabajo",
+    "cautiousness": "Pausa ante riesgos",
+    "rationality": "Razonar con lógica y pasos",
+    "perfectionism": "Exigencia máxima con el resultado",
+    "orderliness": "Orden físico y rutinas claras",
+    "stability": "Cambios de humor bruscos",
+    "happiness": "Tristeza y bajón de ánimo",
+    "calmness": "Enfado fácil (irritabilidad)",
+    "moderation": "Impulsos difíciles de frenar",
+    "toughness": "Sobrepaso ante presión o crítica",
+    "impulse_control": "Reaccionar sin pensar (palabras y emoción)",
+    "imperturbability": "Emociones muy intensas o abrumadoras",
+    "cool_headedness": "Poca serenidad cuando hay tensión",
+    "tranquility": "Altibajos durante el día",
+    "intellect": "Ideas abstractas y análisis",
+    "ingenuity": "Ingenio (enfoques poco obvios)",
+    "reflection": "Contemplación y sensibilidad estética",
+    "competence": "Capacidad de aprender y aplicar",
+    "quickness": "Rapidez al entender",
+    "introspection": "Mirar hacia dentro",
+    "creativity": "Creatividad (varias soluciones)",
+    "imagination": "Imaginación y fantasía",
+    "depth": "Profundidad (ir más allá de la superficie)",
+}
+
+
+def _facet_value(trait_scores: dict, facet_key: str):
+    if not isinstance(trait_scores, dict):
+        return "N/A"
+    if facet_key not in trait_scores:
+        return "N/A"
+    v = trait_scores.get(facet_key)
+    if v is None:
+        return "N/A"
+    return v
+
+
+def _format_ocean_trait_block(trait_key: str, trait_scores: dict) -> str:
+    title = _OCEAN_TRAIT_TITLES_ES.get(trait_key, trait_key)
+    total = _facet_value(trait_scores if isinstance(trait_scores, dict) else {}, "total")
+    lines = [f"- {title}: total = {total}"]
+    for facet_key in _OCEAN_FACET_ORDER.get(trait_key, []):
+        label = _FACET_LABELS_ES.get(facet_key, facet_key)
+        val = _facet_value(trait_scores if isinstance(trait_scores, dict) else {}, facet_key)
+        lines.append(f"  - {label}: {val}")
+    return "\n".join(lines)
+
 
 def _ocean_prompt(ocean_results: list) -> str:
     if not ocean_results:
         return ""
     latest = ocean_results[0]
     scores = latest.get("scores") or {}
-    o = scores.get("openness") or {}
-    c = scores.get("conscientiousness") or {}
-    e = scores.get("extraversion") or {}
-    a = scores.get("agreeableness") or {}
-    n = scores.get("neuroticism") or {}
+    blocks: list[str] = []
+    for trait_key in (
+        "openness",
+        "conscientiousness",
+        "extraversion",
+        "agreeableness",
+        "neuroticism",
+    ):
+        raw = scores.get(trait_key)
+        trait_scores = raw if isinstance(raw, dict) else {}
+        blocks.append(_format_ocean_trait_block(trait_key, trait_scores))
+    body = "\n\n".join(blocks)
     return f"""
 
-PERFIL DE PERSONALIDAD DEL USUARIO (Big Five - OCEAN):
-El usuario ha completado un test de personalidad. Aquí están sus puntuaciones:
+PERFIL DE PERSONALIDAD DEL USUARIO (Big Five - OCEAN, con las 9 facetas AB5C por dimensión cuando existan):
+El usuario ha completado un test de personalidad. Escala típica 0–5 por ítem (total del rasgo y cada faceta).
+En test rápido solo suele haber "total"; el resto de facetas aparecerá como N/A hasta el análisis profundo.
 
-- Openness (Apertura): {o.get("total", "N/A")}
-  - Imaginación: {o.get("imagination", "N/A")}
-  - Estética: {o.get("aesthetics", "N/A")}
-  - Sentimientos: {o.get("feelings", "N/A")}
-  - Curiosidad intelectual: {o.get("intellectual_curiosity", "N/A")}
+{body}
 
-- Conscientiousness (Responsabilidad): {c.get("total", "N/A")}
-  - Orden: {c.get("order", "N/A")}
-  - Competencia: {c.get("competence", "N/A")}
-  - Diligencia: {c.get("dutifulness", "N/A")}
-
-- Extraversion (Extraversión): {e.get("total", "N/A")}
-  - Amigabilidad: {e.get("friendliness", "N/A")}
-  - Gregariedad: {e.get("gregariousness", "N/A")}
-  - Asertividad: {e.get("assertiveness", "N/A")}
-
-- Agreeableness (Amabilidad): {a.get("total", "N/A")}
-  - Confianza: {a.get("trust", "N/A")}
-  - Moralidad: {a.get("morality", "N/A")}
-  - Altruismo: {a.get("altruism", "N/A")}
-
-- Neuroticism (Neuroticismo): {n.get("total", "N/A")}
-  - Ansiedad: {n.get("anxiety", "N/A")}
-  - Ira: {n.get("anger", "N/A")}
-  - Depresión: {n.get("depression", "N/A")}
-
-Usa este perfil para hacer recomendaciones personalizadas que se alineen con la personalidad del usuario."""
+Usa totales y facetas (no solo el total del rasgo) para afinar recomendaciones culturales cuando haya datos."""
 
 
 def _favorites_prompt(favorites: list) -> str:
