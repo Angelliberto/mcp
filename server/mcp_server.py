@@ -320,6 +320,71 @@ async def http_artistic_description(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "data": data})
 
 
+@mcp.custom_route("/ai/v1/feed/personalized-curate", methods=["POST"])
+async def http_feed_personalized_curate(request: Request) -> JSONResponse:
+    """Curación IA + búsqueda web opcional (Serper) → candidatos para resolver en APIs del cliente."""
+    err = _check_internal_secret(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"ok": False, "error": "Cuerpo JSON inválido"}, status_code=400
+        )
+
+    ocean_result = body.get("oceanResult")
+    if not isinstance(ocean_result, dict):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "oceanResult es requerido y debe ser un objeto",
+            },
+            status_code=400,
+        )
+
+    saved_tags = body.get("savedTags") or []
+    if not isinstance(saved_tags, list):
+        saved_tags = []
+
+    artistic_profile = body.get("artisticProfile")
+    if artistic_profile is not None and not isinstance(artistic_profile, dict):
+        artistic_profile = None
+
+    agent = get_ai_agent()
+
+    def _run():
+        return agent.curate_personalized_feed(
+            ocean_result,
+            saved_tags=saved_tags,
+            artistic_profile=artistic_profile,
+        )
+
+    try:
+        data = await asyncio.to_thread(_run)
+    except RuntimeError as e:
+        log.warning("feed/personalized-curate: %s", e)
+        return JSONResponse(
+            {"ok": False, "error": str(e), "error_type": type(e).__name__},
+            status_code=503,
+        )
+    except Exception as e:
+        log.error(
+            "feed/personalized-curate: error\n%s",
+            traceback.format_exc(),
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": str(e) or type(e).__name__,
+                "error_type": type(e).__name__,
+            },
+            status_code=500,
+        )
+
+    return JSONResponse({"ok": True, "data": data})
+
+
 @mcp.custom_route("/ai/v1/health", methods=["GET"])
 async def http_ai_health(_request: Request) -> JSONResponse:
     agent = get_ai_agent()
@@ -335,7 +400,10 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     try:
         print(f"Iniciando Dream Lodge MCP Server en puerto {port}")
-        print(f"HTTP IA: POST /ai/v1/chat/message , POST /ai/v1/ocean/artistic-description")
+        print(
+            "HTTP IA: POST /ai/v1/chat/message , POST /ai/v1/ocean/artistic-description , "
+            "POST /ai/v1/feed/personalized-curate"
+        )
     except UnicodeEncodeError:
         print(f"[*] Dream Lodge MCP Server port {port}")
     mcp.run(transport="sse", host="0.0.0.0", port=port)

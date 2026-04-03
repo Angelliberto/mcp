@@ -14,6 +14,7 @@ from typing import Any, Optional
 import dreamlodge_db as db
 from system_prompts import build_system_prompt
 from tag_catalog import format_catalog_for_prompt, slugify_hashtag
+from web_search import build_curator_context_from_serper
 
 logger = logging.getLogger("dreamlodge.ai")
 
@@ -803,6 +804,172 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
 
         logger.info("artistic_description: OK profile=%s tags=%s", profile, len(deduped))
         return parsed
+
+    @staticmethod
+    def _normalize_saved_tags_list(raw: Any) -> list[str]:
+        out: list[str] = []
+        if not raw:
+            return out
+        for t in raw:
+            if isinstance(t, str):
+                s = slugify_hashtag(t)
+            elif isinstance(t, dict) and t.get("name"):
+                s = slugify_hashtag(str(t["name"]))
+            else:
+                continue
+            if len(s) >= 2 and s not in out:
+                out.append(s)
+        return out[:24]
+
+    def curate_personalized_feed(
+        self,
+        ocean_result: dict,
+        saved_tags: list | None = None,
+        artistic_profile: dict | None = None,
+    ) -> dict[str, Any]:
+        """
+        1) Contexto web opcional (Serper).
+        2) Gemini produce candidatos {category, title, creator?} para resolver luego en APIs TMDB/Spotify/IGDB/Books/Met.
+        """
+        scores = ocean_result.get("scores")
+        if not scores or not isinstance(scores, dict):
+            return {"candidates": [], "webSearchUsed": False, "reason": "no_ocean_scores"}
+
+        if not self._configured():
+            return {"candidates": [], "webSearchUsed": False, "reason": "no_gemini"}
+
+        o = _trait_total(scores, "openness")
+        c = _trait_total(scores, "conscientiousness")
+        e = _trait_total(scores, "extraversion")
+        a = _trait_total(scores, "agreeableness")
+        n = _trait_total(scores, "neuroticism")
+
+        tags_norm = self._normalize_saved_tags_list(saved_tags)
+
+        personality_line = (
+            f"openness {o:.1f} conscientiousness {c:.1f} extraversion {e:.1f} "
+            f"agreeableness {a:.1f} neuroticism {n:.1f}"
+        )
+        web_block, web_used = build_curator_context_from_serper(
+            personality_line, tags_norm
+        )
+
+        art_extra = ""
+        if artistic_profile and isinstance(artistic_profile, dict):
+            prof = (artistic_profile.get("profile") or "").strip()
+            desc = (artistic_profile.get("description") or "").strip()[:500]
+            recs = artistic_profile.get("recommendations")
+            rec_line = ""
+            if isinstance(recs, list) and recs:
+                rec_line = "Sugerencias previas: " + "; ".join(
+                    str(x) for x in recs[:6] if x
+                )
+            art_extra = f"\nPerfil artístico existente: {prof}\n{desc}\n{rec_line}\n"
+
+        tags_line = ", ".join(f"#{t}" for t in tags_norm) if tags_norm else "(ninguno)"
+
+        prompt = f"""Eres curador cultural para una app de descubrimiento (cine, series, música, libros, videojuegos, arte).
+
+Perfil OCEAN del usuario (escala 0-5):
+- Apertura {o:.2f}, Responsabilidad {c:.2f}, Extraversión {e:.2f}, Amabilidad {a:.2f}, Neuroticismo {n:.2f}
+
+Hashtags que el usuario ya guardó: {tags_line}
+{art_extra}
+Fragmentos recientes de búsqueda web (pueden incluir títulos reales; úsalos si encajan con el perfil):
+{web_block or "(Sin resultados web: elige obras clásicas o muy conocidas, títulos exactos en español o en el título original más reconocible.)"}
+
+TAREA: Devuelve SOLO un JSON válido, sin markdown ni texto alrededor, con esta forma:
+{{"candidates":[{{"category":"cine","title":"Nombre exacto de la obra","creator":"autor o director opcional"}}, ...]}}
+
+Reglas estrictas:
+- "category" debe ser exactamente uno de: cine, musica, literatura, videojuegos, arte-visual
+- Entre 14 y 20 elementos en total; mezcla las categorías (varios de cada tipo).
+- Solo obras reales que existan (película, serie, álbum, libro, videojuego, artista u obra de arte).
+- "title" debe ser el título principal buscable en TMDB, Spotify, Google Books, IGDB o museos.
+- Para arte-visual usa nombre de artista + obra si aplica, o solo artista reconocible.
+- No incluyas explicaciones ni campos extra fuera de "candidates".
+"""
+
+        try:
+            text = self.generate_with_gemini(
+                prompt, purpose="curación feed personalizado", timeout_ms=55000
+            )
+        except Exception as ex:
+            logger.exception("curate_feed: fallo Gemini")
+            detail = _format_exception_for_client(ex)
+            raise RuntimeError(
+                f"No se pudo curar el feed con el modelo. {detail}"
+            ) from ex
+
+        m = re.search(r"\{[\s\S]*\}", text or "")
+        if not m:
+            logger.warning("curate_feed: sin JSON en respuesta")
+            return {"candidates": [], "webSearchUsed": web_used, "reason": "bad_model_json"}
+
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError as ex:
+            logger.warning("curate_feed: JSON inválido %s", ex)
+            return {"candidates": [], "webSearchUsed": web_used, "reason": "json_error"}
+
+        raw_list = parsed.get("candidates")
+        if not isinstance(raw_list, list):
+            return {"candidates": [], "webSearchUsed": web_used, "reason": "no_candidates"}
+
+        allowed = frozenset(
+            {"cine", "musica", "literatura", "videojuegos", "arte-visual"}
+        )
+        alias = {
+            "pelicula": "cine",
+            "películas": "cine",
+            "series": "cine",
+            "serie": "cine",
+            "tv": "cine",
+            "film": "cine",
+            "movie": "cine",
+            "música": "musica",
+            "music": "musica",
+            "album": "musica",
+            "libro": "literatura",
+            "libros": "literatura",
+            "book": "literatura",
+            "juego": "videojuegos",
+            "juegos": "videojuegos",
+            "game": "videojuegos",
+            "games": "videojuegos",
+            "arte": "arte-visual",
+            "art": "arte-visual",
+            "pintura": "arte-visual",
+        }
+
+        cleaned: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in raw_list[:24]:
+            if not isinstance(item, dict):
+                continue
+            cat = str(item.get("category") or "").strip().lower()
+            cat = cat.replace(" ", "").replace("_", "-")
+            if cat in alias:
+                cat = alias[cat]
+            if cat not in allowed:
+                continue
+            title = str(item.get("title") or "").strip()
+            if len(title) < 2:
+                continue
+            creator = str(item.get("creator") or "").strip()
+            key = (cat, title.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            row: dict[str, str] = {"category": cat, "title": title[:200]}
+            if creator:
+                row["creator"] = creator[:120]
+            cleaned.append(row)
+
+        logger.info(
+            "curate_feed: %s candidatos web_used=%s", len(cleaned), web_used
+        )
+        return {"candidates": cleaned, "webSearchUsed": web_used}
 
 
 _agent: Optional[DreamLodgeAIAgent] = None
