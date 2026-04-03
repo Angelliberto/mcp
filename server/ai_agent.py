@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 import dreamlodge_db as db
 from system_prompts import build_system_prompt
+from tag_catalog import format_catalog_for_prompt, slugify_hashtag
 
 logger = logging.getLogger("dreamlodge.ai")
 
@@ -694,6 +695,8 @@ class DreamLodgeAIAgent:
             if parts:
                 sub = "Subfacetas detalladas:\n" + "\n".join(parts) + "\n"
 
+        catalog_block = format_catalog_for_prompt(95)
+
         prompt = f"""Genera una descripción artística personalizada para un usuario basándote en sus resultados del test de personalidad OCEAN (Big Five).
 
 Resultados del test:
@@ -704,21 +707,21 @@ Resultados del test:
 - Neurosis (Neuroticism): {float(n):.2f}/5
 
 {sub}
+REFERENCIA DE HASHTAGS (géneros reales TMDB en español si hay API key, más categorías culturales; úsalos como guía — mismo estilo que tags de obras / DeviantArt):
+{catalog_block}
+
 Genera una descripción artística que incluya:
 1. Un perfil artístico (nombre corto, ej: "Explorador", "Contemplativo", "Existencial", "Equilibrado")
 2. Una descripción detallada (2-3 párrafos) que explique cómo estos rasgos de personalidad influyen en sus preferencias artísticas
 3. Una lista de recomendaciones específicas de géneros o tipos de contenido cultural que le gustarían
-4. Entre 5 y 10 etiquetas cortas ("suggestedTags") que el usuario pueda guardar en su perfil para guiar recomendaciones futuras. Cada etiqueta debe tener "name" (2-4 palabras en español, memorable) y "aiHint" (una frase breve para la IA: tono, temas o criterios al recomendar).
+4. Entre 6 y 12 suggestedTags: hashtags MUY SIMPLES, solo género o categoría corta (como los géneros de películas, música o juegos en metadatos). Formato estilo DeviantArt: una sola pieza sin espacios, minúsculas, opcional # en el string; ej. #drama, #jazz, #rpg, #surrealismo. PROHIBIDO: frases largas, explicaciones o "aiHint". Prioriza tags del catálogo de referencia cuando encajen con el perfil.
 
 IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto adicional antes o después:
 {{
   "profile": "nombre del perfil",
   "description": "descripción detallada...",
   "recommendations": ["recomendación 1", "recomendación 2", ...],
-  "suggestedTags": [
-    {{ "name": "Cine reflexivo", "aiHint": "Historias lentas con ambigüedad moral" }},
-    {{ "name": "Neo-noir", "aiHint": "Visuales oscuros e ironía" }}
-  ]
+  "suggestedTags": ["#drama", "#jazz", "#conceptart", "#rpg"]
 }}"""
 
         try:
@@ -771,20 +774,34 @@ IMPORTANTE: Responde SOLO con un JSON válido en el siguiente formato, sin texto
             raise RuntimeError("El campo suggestedTags debe ser una lista.")
         normalized_tags: list[dict[str, str]] = []
         if tags_raw:
-            for item in tags_raw[:12]:
+            for item in tags_raw[:16]:
+                raw_str = ""
                 if isinstance(item, str):
-                    n = item.strip()
-                    if n:
-                        normalized_tags.append({"name": n, "aiHint": ""})
+                    raw_str = item.strip()
                 elif isinstance(item, dict):
-                    n = (item.get("name") or "").strip()
-                    if not n:
-                        continue
-                    h = (item.get("aiHint") or item.get("ai_hint") or "").strip()
-                    normalized_tags.append({"name": n, "aiHint": h})
-        parsed["suggestedTags"] = normalized_tags
+                    raw_str = (
+                        item.get("name")
+                        or item.get("tag")
+                        or item.get("hashtag")
+                        or ""
+                    )
+                    raw_str = str(raw_str).strip()
+                if not raw_str:
+                    continue
+                slug = slugify_hashtag(raw_str)
+                if len(slug) < 2:
+                    continue
+                normalized_tags.append({"name": slug, "aiHint": ""})
+        seen_slugs: set[str] = set()
+        deduped: list[dict[str, str]] = []
+        for t in normalized_tags:
+            s = t["name"]
+            if s not in seen_slugs:
+                seen_slugs.add(s)
+                deduped.append(t)
+        parsed["suggestedTags"] = deduped
 
-        logger.info("artistic_description: OK profile=%s tags=%s", profile, len(normalized_tags))
+        logger.info("artistic_description: OK profile=%s tags=%s", profile, len(deduped))
         return parsed
 
 

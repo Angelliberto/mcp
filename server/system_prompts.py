@@ -128,23 +128,20 @@ def _saved_tags_prompt(saved_tags: list) -> str:
     for item in saved_tags[:16]:
         if not isinstance(item, dict):
             continue
-        name = (item.get("name") or "").strip()
-        if not name:
+        slug = (item.get("name") or "").strip()
+        if not slug:
             continue
-        hint = (item.get("aiHint") or "").strip()
-        if hint:
-            lines.append(f'- "{name}" — {hint}')
-        else:
-            lines.append(f'- "{name}"')
+        display = slug if slug.startswith("#") else f"#{slug}"
+        lines.append(f"- {display}")
     if not lines:
         return ""
     return f"""
 
-ETIQUETAS DE INTERÉS GUARDADAS POR EL USUARIO:
-El usuario eligió y guardó estas etiquetas (definen tono, temas y estilo para recomendaciones):
+HASHTAGS DE INTERÉS GUARDADOS (estilo género / DeviantArt):
+El usuario guardó estos hashtags para orientar recomendaciones; trátalos como géneros o categorías cortas:
 {chr(10).join(lines)}
 
-Prioriza estas preferencias al recomendar o comentar obras: vocabulario, atmósfera, géneros y autores afines. Si pide algo genérico, alinéalo con estas etiquetas."""
+Prioriza obras cuyos metadatos (géneros, estilos, tags) encajen con estos hashtags. Si pide algo genérico, alinéalo con ellos."""
 
 
 def build_system_prompt(
